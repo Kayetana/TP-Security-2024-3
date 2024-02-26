@@ -8,9 +8,12 @@ ENV GOOS linux
 
 RUN go build -o bin/proxy ./cmd/proxy/main.go
 
-FROM ubuntu:20.04 AS release
+FROM alpine:3.17 AS release
+
+RUN apk update && apk add --no-cache openssl ca-certificates
 
 COPY --from=build /source/bin/proxy /proxy
+COPY --from=build /source/certs /certs
 
 EXPOSE 8080
 
