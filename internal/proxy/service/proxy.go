@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -329,35 +330,115 @@ func (p *Proxy) SendRequest(req *proxy.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func (p *Proxy) addSymbolToHeaders(headers http.Header, symbol string) {
-	for key, vals := range headers {
-		for i, val := range vals {
-			headers[key][i] = val + symbol
-		}
-	}
-}
-
 func (p *Proxy) CheckForInjection(req *proxy.Request) (string, error) {
 	convReq, _ := p.convertRequest(req)
-	firstResp, err := http.DefaultTransport.RoundTrip(convReq)
+	resp, err := http.DefaultTransport.RoundTrip(convReq)
 	if err != nil {
 		return "", err
 	}
 
-	log.Println("headers:", convReq.Header)
-	p.addSymbolToHeaders(convReq.Header, "'")
-	log.Println("headers:", convReq.Header)
-
-	secondResp, err := http.DefaultTransport.RoundTrip(convReq)
+	result, err := p.checkParams(convReq, resp)
 	if err != nil {
 		return "", err
 	}
+	if result != "" {
+		return result, nil
+	}
 
-	if !p.isEqual(firstResp, secondResp) {
-		return "headers are vulnerable", nil
+	result, err = p.checkHeaders(convReq, resp)
+	if err != nil {
+		return "", err
+	}
+	if result != "" {
+		return result, nil
 	}
 
 	return "no vulnerabilities found", nil
+}
+
+func (p *Proxy) checkParams(req *http.Request, resp *http.Response) (string, error) {
+	params := req.URL.Query()
+	log.Println("start checking query params:", params)
+
+	// {"days": ["1"], "month": ["1"]}
+	for key, values := range params {
+		for _, symbol := range []string{"'", "\""} {
+			log.Println("insert quote", symbol)
+
+			params.Del(key)
+			for _, value := range values {
+				params.Add(key, value+symbol)
+			}
+			req.URL.RawQuery = params.Encode()
+			log.Println("change query parameter", req.URL.RawQuery)
+
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return "", err
+			}
+			req.Body = io.NopCloser(bytes.NewBuffer(body))
+
+			secondResp, err := http.DefaultTransport.RoundTrip(req)
+			if err != nil {
+				return "", err
+			}
+
+			req.Body = io.NopCloser(bytes.NewBuffer(body))
+
+			if !p.isEqual(resp, secondResp) {
+				return fmt.Sprintln("vulnerable query parameter", key), nil
+			}
+		}
+		params.Del(key)
+		for _, value := range values {
+			params.Add(key, value)
+		}
+		req.URL.RawQuery = params.Encode()
+		log.Println("end check", key, "param and return to original state:", req.URL.RawQuery)
+	}
+	return "", nil
+}
+
+func (p *Proxy) checkHeaders(req *http.Request, resp *http.Response) (string, error) {
+	headers := req.Header
+	log.Println("start checking headers:", headers)
+
+	for key, values := range headers {
+		for _, symbol := range []string{"'", "\""} {
+			log.Println("insert quote", symbol)
+
+			headers.Del(key)
+			for _, value := range values {
+				headers.Add(key, value+symbol)
+			}
+			req.Header = headers
+			log.Println("change header", headers)
+
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return "", err
+			}
+			req.Body = io.NopCloser(bytes.NewBuffer(body))
+
+			secondResp, err := http.DefaultTransport.RoundTrip(req)
+			if err != nil {
+				return "", err
+			}
+
+			req.Body = io.NopCloser(bytes.NewBuffer(body))
+
+			if !p.isEqual(resp, secondResp) {
+				return fmt.Sprintln("vulnerable query parameter", key), nil
+			}
+		}
+		headers.Del(key)
+		for _, value := range values {
+			headers.Add(key, value)
+		}
+		req.Header = headers
+		log.Println("end check", key, "and return to original state:", headers)
+	}
+	return "", nil
 }
 
 func (p *Proxy) isEqual(first, second *http.Response) bool {
