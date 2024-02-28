@@ -12,3 +12,7 @@ type Repository interface {
 type Error struct {
 	Error string `json:"error"`
 }
+
+type ScanningResult struct {
+	Result string `json:"scanning_result"`
+}

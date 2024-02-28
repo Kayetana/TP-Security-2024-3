@@ -234,24 +234,14 @@ func (p *Proxy) parseRequest(req *http.Request, path string) (*proxy.Request, er
 	return parsedReq, nil
 }
 
-func (p *Proxy) createRequest(req *proxy.Request) (*http.Request, error) {
+func (p *Proxy) convertRequest(req *proxy.Request) (*http.Request, error) {
 	r, err := http.NewRequest(req.Method, req.Path, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	if req.QueryParams != nil {
-		var queryParams map[string][]string
-		if err = json.Unmarshal(*req.QueryParams, &queryParams); err != nil {
-			return nil, err
-		}
-		values := url.Values{}
-		for key, vals := range queryParams {
-			for _, val := range vals {
-				values.Add(key, val)
-			}
-		}
-		r.URL.RawQuery = values.Encode()
+		r.URL.RawQuery, _ = p.getRawQuery(req.QueryParams)
 	}
 	log.Println("query params:", r.URL.RawQuery)
 
@@ -276,8 +266,22 @@ func (p *Proxy) createRequest(req *proxy.Request) (*http.Request, error) {
 	log.Println("cookies:", r.Cookies())
 
 	r.Body = io.NopCloser(strings.NewReader(req.Body))
-
 	return r, nil
+}
+
+func (p *Proxy) getRawQuery(params *json.RawMessage) (string, error) {
+	var queryParams map[string][]string
+
+	if err := json.Unmarshal(*params, &queryParams); err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	for key, vals := range queryParams {
+		for _, val := range vals {
+			values.Add(key, val)
+		}
+	}
+	return values.Encode(), nil
 }
 
 func (p *Proxy) parseResponse(resp *http.Response) (*proxy.Response, error) {
@@ -305,10 +309,10 @@ func (p *Proxy) SendRequest(req *proxy.Request) (*http.Response, error) {
 		log.Println("saving request to db error:", err)
 	}
 
-	newReq, _ := p.createRequest(req)
-	newReq.Header.Del("Proxy-Connection")
+	convertedReq, _ := p.convertRequest(req)
+	convertedReq.Header.Del("Proxy-Connection")
 
-	resp, err := http.DefaultTransport.RoundTrip(newReq)
+	resp, err := http.DefaultTransport.RoundTrip(convertedReq)
 	if err != nil {
 		return nil, err
 	}
@@ -323,4 +327,39 @@ func (p *Proxy) SendRequest(req *proxy.Request) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+func (p *Proxy) addSymbolToHeaders(headers http.Header, symbol string) {
+	for key, vals := range headers {
+		for i, val := range vals {
+			headers[key][i] = val + symbol
+		}
+	}
+}
+
+func (p *Proxy) CheckForInjection(req *proxy.Request) (string, error) {
+	convReq, _ := p.convertRequest(req)
+	firstResp, err := http.DefaultTransport.RoundTrip(convReq)
+	if err != nil {
+		return "", err
+	}
+
+	log.Println("headers:", convReq.Header)
+	p.addSymbolToHeaders(convReq.Header, "'")
+	log.Println("headers:", convReq.Header)
+
+	secondResp, err := http.DefaultTransport.RoundTrip(convReq)
+	if err != nil {
+		return "", err
+	}
+
+	if !p.isEqual(firstResp, secondResp) {
+		return "headers are vulnerable", nil
+	}
+
+	return "no vulnerabilities found", nil
+}
+
+func (p *Proxy) isEqual(first, second *http.Response) bool {
+	return first.StatusCode == second.StatusCode && first.Header.Get("Content-Length") == second.Header.Get("Content-Length")
 }

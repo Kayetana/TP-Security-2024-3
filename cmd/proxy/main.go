@@ -44,6 +44,7 @@ func main() {
 	router.HandleFunc("/requests", handler.GetAllRequests).Methods(http.MethodGet)
 	router.HandleFunc("/requests/{id}", handler.GetRequest).Methods(http.MethodGet)
 	router.HandleFunc("/repeat/{id}", handler.RepeatRequest).Methods(http.MethodGet)
+	router.HandleFunc("/scan/{id}", handler.ScanRequest).Methods(http.MethodGet)
 
 	log.Println("starting api server on", apiPort)
 	log.Fatal(http.ListenAndServe(":"+apiPort, router))

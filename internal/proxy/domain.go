@@ -12,6 +12,7 @@ type Repository interface {
 
 type HandlerProxy interface {
 	SendRequest(req *Request) (*http.Response, error)
+	CheckForInjection(req *Request) (string, error)
 }
 
 type Request struct {

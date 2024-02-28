@@ -98,3 +98,33 @@ func (h *Handler) RepeatRequest(w http.ResponseWriter, r *http.Request) {
 		h.writeJSON(w, http.StatusInternalServerError, api.Error{})
 	}
 }
+
+func (h *Handler) ScanRequest(w http.ResponseWriter, r *http.Request) {
+	log.Println("entered handler ScanRequest")
+
+	id, err := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	if err != nil {
+		log.Println("error getting id:", err)
+		h.writeJSON(w, http.StatusBadRequest, api.Error{Error: "correct id required"})
+		return
+	}
+	log.Println("got id", id)
+
+	request, err := h.repo.GetRequestById(id)
+	if err != nil {
+		log.Println("error getting request:", err)
+		h.writeJSON(w, http.StatusNotFound, api.Error{Error: "no such request"})
+		return
+	}
+	log.Println("got request by id")
+
+	result, err := h.proxy.CheckForInjection(&request)
+	if err != nil {
+		log.Println("error scanning request:", err)
+		h.writeJSON(w, http.StatusInternalServerError, api.Error{})
+		return
+	}
+	log.Println(result)
+
+	h.writeJSON(w, http.StatusOK, api.ScanningResult{Result: result})
+}
