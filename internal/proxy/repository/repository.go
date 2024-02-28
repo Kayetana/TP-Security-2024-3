@@ -1,4 +1,4 @@
-package repository
+package proxy_repository
 
 import (
 	"context"

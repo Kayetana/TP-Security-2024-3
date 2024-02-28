@@ -15,6 +15,7 @@ RUN apk update && apk add --no-cache openssl ca-certificates
 COPY --from=build /source/bin/proxy /proxy
 COPY --from=build /source/certs /certs
 
+EXPOSE 8000
 EXPOSE 8080
 
 CMD ["/proxy"]

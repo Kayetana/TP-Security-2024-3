@@ -25,6 +25,7 @@ services:
     environment:
       DATABASE_URL: "postgres://proxy:proxy@service-postgres:5432/proxy"
     ports:
+      - "8000:8000"
       - "8080:8080"
     depends_on:
       - service-postgres

@@ -48,7 +48,6 @@ func (p *Proxy) Start(port string) error {
 			}
 		}),
 	}
-	log.Println("starting server on", server.Addr)
 	return server.ListenAndServe()
 }
 
