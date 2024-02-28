@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"proxy/internal/api"
+	"proxy/internal/proxy"
 )
 
 type Postgres struct {
@@ -14,8 +15,8 @@ func NewPostgres(pool *pgxpool.Pool) api.Repository {
 	return &Postgres{Pool: pool}
 }
 
-func (db *Postgres) GetAllRequests() ([]api.Request, error) {
-	requests := make([]api.Request, 0)
+func (db *Postgres) GetAllRequests() ([]proxy.Request, error) {
+	requests := make([]proxy.Request, 0)
 
 	const query = `select id, method, path, query_params, headers, cookies, content_type, body from request`
 	rows, err := db.Pool.Query(context.TODO(), query)
@@ -25,7 +26,7 @@ func (db *Postgres) GetAllRequests() ([]api.Request, error) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var r api.Request
+		var r proxy.Request
 
 		err = rows.Scan(&r.Id, &r.Method, &r.Path, &r.QueryParams, &r.Headers, &r.Cookies, &r.ContentType, &r.Body)
 		if err != nil {
@@ -37,14 +38,14 @@ func (db *Postgres) GetAllRequests() ([]api.Request, error) {
 	return requests, nil
 }
 
-func (db *Postgres) GetRequestById(id uint64) (api.Request, error) {
-	var r api.Request
+func (db *Postgres) GetRequestById(id uint64) (proxy.Request, error) {
+	var r proxy.Request
 	const query = `select id, method, path, query_params, headers, cookies, content_type, body from request where id = $1`
 
 	row := db.Pool.QueryRow(context.TODO(), query, id)
 	err := row.Scan(&r.Id, &r.Method, &r.Path, &r.QueryParams, &r.Headers, &r.Cookies, &r.ContentType, &r.Body)
 	if err != nil {
-		return api.Request{}, err
+		return proxy.Request{}, err
 	}
 	return r, nil
 }

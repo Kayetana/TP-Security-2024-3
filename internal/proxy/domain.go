@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"net/http"
 )
 
 type Repository interface {
@@ -9,15 +10,19 @@ type Repository interface {
 	SaveResponse(resp *Response) error
 }
 
+type HandlerProxy interface {
+	SendRequest(req *Request) (*http.Response, error)
+}
+
 type Request struct {
-	Id          uint64
-	Method      string
-	Path        string
-	QueryParams *json.RawMessage
-	Headers     *json.RawMessage
-	Cookies     *json.RawMessage
-	ContentType string
-	Body        string
+	Id          uint64           `json:"id"`
+	Method      string           `json:"method"`
+	Path        string           `json:"path"`
+	QueryParams *json.RawMessage `json:"query_params"`
+	Headers     *json.RawMessage `json:"headers"`
+	Cookies     *json.RawMessage `json:"cookies"`
+	ContentType string           `json:"content_type"`
+	Body        string           `json:"body"`
 }
 
 type Response struct {

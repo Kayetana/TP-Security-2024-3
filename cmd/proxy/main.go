@@ -23,33 +23,28 @@ const (
 )
 
 func main() {
-	/*
-		/requests – список запросов
-		/requests/id – вывод 1 запроса
-		/repeat/id – повторная отправка запроса
-		/scan/id – сканирование запроса
-	*/
-
 	connPool, err := pgxpool.New(context.Background(), os.Getenv(EnvPostgresQueryName))
 	if err != nil {
 		log.Fatal("error connecting to db:", err)
 	}
 	log.Println("connected to db")
 
+	proxyRepo := proxy_repository.NewPostgres(connPool)
+	proxy := proxy_service.NewProxy(proxyRepo, pathToGenCert, pathToCertFile, pathToKeyFile)
+
+	log.Println("starting proxy server on", proxyPort)
+	go func() {
+		log.Fatal(proxy.Start(proxyPort))
+	}()
+
 	apiRepo := api_repository.NewPostgres(connPool)
-	handler := api_delivery.NewHandler(apiRepo)
+	handler := api_delivery.NewHandler(apiRepo, proxy)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/requests", handler.GetAllRequests).Methods(http.MethodGet)
 	router.HandleFunc("/requests/{id}", handler.GetRequest).Methods(http.MethodGet)
+	router.HandleFunc("/repeat/{id}", handler.RepeatRequest).Methods(http.MethodGet)
 
-	log.Println("starting server on", apiPort)
-	go func() {
-		log.Fatal(http.ListenAndServe(":"+apiPort, router))
-	}()
-
-	proxyRepo := proxy_repository.NewPostgres(connPool)
-	proxy := proxy_service.NewProxy(proxyRepo, pathToGenCert, pathToCertFile, pathToKeyFile)
-	log.Println("starting server on", proxyPort)
-	log.Fatal(proxy.Start(proxyPort))
+	log.Println("starting api server on", apiPort)
+	log.Fatal(http.ListenAndServe(":"+apiPort, router))
 }

@@ -6,12 +6,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os/exec"
 	"proxy/internal/proxy"
 	"proxy/internal/utils"
@@ -52,16 +52,15 @@ func (p *Proxy) Start(port string) error {
 }
 
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Println("got http request Method:", r.Method, "Host:", r.Host)
+	reqUrl := "http://" + r.URL.Host + r.URL.Path
+	log.Println("got http", r.Method, "request to", reqUrl)
 
-	parsedReq, err := p.parseRequest(r)
+	parsedReq, err := p.parseRequest(r, reqUrl)
 	if err != nil {
-		log.Println("request parsing error:", err)
-	} else {
-		err = p.repo.SaveRequest(parsedReq)
-		if err != nil {
-			log.Println("saving request to db error:", err)
-		}
+		log.Println(err)
+	}
+	if err = p.repo.SaveRequest(parsedReq); err != nil {
+		log.Println("saving request to db error:", err)
 	}
 
 	r.Header.Del("Proxy-Connection")
@@ -75,13 +74,11 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	parsedResp, err := p.parseResponse(resp)
 	if err != nil {
-		log.Println("response parsing error:", err)
-	} else {
-		parsedResp.RequestId = parsedReq.Id
-		err = p.repo.SaveResponse(parsedResp)
-		if err != nil {
-			log.Println("saving response to db error:", err)
-		}
+		log.Println(err)
+	}
+	parsedResp.RequestId = parsedReq.Id
+	if err = p.repo.SaveResponse(parsedResp); err != nil {
+		log.Println("saving response to db error:", err)
 	}
 
 	w.WriteHeader(resp.StatusCode)
@@ -93,7 +90,9 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
-	log.Println("got https request", "Host:", r.Host)
+	hostname := strings.Split(r.URL.Host, ":")[0]
+	reqUrl := "https://" + hostname + r.URL.Path
+	log.Println("got https request to", reqUrl)
 
 	clientConn, _, err := w.(http.Hijacker).Hijack()
 	if err != nil {
@@ -108,11 +107,12 @@ func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config, err := p.getConfig(strings.Split(r.Host, ":")[0])
+	config, err := p.getConfig(hostname)
 	if err != nil {
 		log.Println("certificate generation error:", err)
 		return
 	}
+	log.Println("got certificate for", hostname)
 
 	tlsClientConn := tls.Server(clientConn, &config)
 	defer tlsClientConn.Close()
@@ -138,7 +138,7 @@ func (p *Proxy) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("request has been passed")
 
-	parsedReq, err := p.parseRequest(req)
+	parsedReq, err := p.parseRequest(req, reqUrl)
 	if err != nil {
 		log.Println(err)
 	}
@@ -205,10 +205,10 @@ func (p *Proxy) passResponse(clientConn, serverConn *tls.Conn, request *http.Req
 	return response, err
 }
 
-func (p *Proxy) parseRequest(req *http.Request) (*proxy.Request, error) {
+func (p *Proxy) parseRequest(req *http.Request, path string) (*proxy.Request, error) {
 	parsedReq := &proxy.Request{
 		Method:      req.Method,
-		Path:        fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.URL.Host, req.URL.Path),
+		Path:        path,
 		ContentType: req.Header.Get("Content-Type"),
 	}
 
@@ -234,6 +234,52 @@ func (p *Proxy) parseRequest(req *http.Request) (*proxy.Request, error) {
 	return parsedReq, nil
 }
 
+func (p *Proxy) createRequest(req *proxy.Request) (*http.Request, error) {
+	r, err := http.NewRequest(req.Method, req.Path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.QueryParams != nil {
+		var queryParams map[string][]string
+		if err = json.Unmarshal(*req.QueryParams, &queryParams); err != nil {
+			return nil, err
+		}
+		values := url.Values{}
+		for key, vals := range queryParams {
+			for _, val := range vals {
+				values.Add(key, val)
+			}
+		}
+		r.URL.RawQuery = values.Encode()
+	}
+	log.Println("query params:", r.URL.RawQuery)
+
+	if req.Headers != nil {
+		headers := http.Header{}
+		if err = json.Unmarshal(*req.Headers, &headers); err != nil {
+			return nil, err
+		}
+		r.Header = headers
+	}
+	log.Println("headers:", r.Header)
+
+	if req.Cookies != nil {
+		var cookies []*http.Cookie
+		if err = json.Unmarshal(*req.Cookies, &cookies); err != nil {
+			return nil, err
+		}
+		for _, cookie := range cookies {
+			r.AddCookie(cookie)
+		}
+	}
+	log.Println("cookies:", r.Cookies())
+
+	r.Body = io.NopCloser(strings.NewReader(req.Body))
+
+	return r, nil
+}
+
 func (p *Proxy) parseResponse(resp *http.Response) (*proxy.Response, error) {
 	parsedResp := &proxy.Response{
 		StatusCode:  resp.StatusCode,
@@ -252,4 +298,29 @@ func (p *Proxy) parseResponse(resp *http.Response) (*proxy.Response, error) {
 	resp.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	return parsedResp, nil
+}
+
+func (p *Proxy) SendRequest(req *proxy.Request) (*http.Response, error) {
+	if err := p.repo.SaveRequest(req); err != nil {
+		log.Println("saving request to db error:", err)
+	}
+
+	newReq, _ := p.createRequest(req)
+	newReq.Header.Del("Proxy-Connection")
+
+	resp, err := http.DefaultTransport.RoundTrip(newReq)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedResp, err := p.parseResponse(resp)
+	if err != nil {
+		log.Println(err)
+	}
+	parsedResp.RequestId = req.Id
+	if err = p.repo.SaveResponse(parsedResp); err != nil {
+		log.Println("saving response to db error:", err)
+	}
+
+	return resp, nil
 }
